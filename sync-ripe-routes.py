@@ -162,7 +162,8 @@ def create_route(item):
     return prefix, response.text, response.status_code
 
 
-print(f"Number of Routes to create: {len(to_create)}")
+print(f"Number of ripe_prefixes: {len(ripe_prefixes)}")
+print(f"Number of routes to create: {len(to_create)}")
 create_results, create_errors = run_workers(create_route, to_create, NETBIRD_THREADS)
 for prefix, text, status_code in create_results:
     if status_code == 200 and text.strip() in ("", "{}"):
