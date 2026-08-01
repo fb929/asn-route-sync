@@ -9,6 +9,7 @@ import yaml
 import threading
 import queue
 from netaddr import cidr_merge
+import socket
 
 # load config {{
 scriptName = os.path.basename(sys.argv[0]).split('.')[0]
@@ -140,6 +141,32 @@ for asn, prefixes in asn_to_prefixes.items():
         if prefix not in existing and (asn, prefix) not in to_create:
             to_create.append((asn, prefix))
 
+# resolv dns_names to ips {{
+def resolve_hostname(hostname: str) -> list:
+    """
+    Resolv hostname to IP
+    """
+    ips = []
+    try:
+        infos = socket.getaddrinfo(hostname, None)
+        for info in infos:
+            ip = info[4][0]
+            if ip not in ips:
+                ips.append(ip)
+    except socket.gaierror:
+        pass
+    return ips
+
+for hostname in cfg['dns_names']:
+    asn = 'dns_names'
+    for ip in resolve_hostname(hostname):
+        prefix = ip + '/32'
+        if prefix not in ripe_prefixes:
+            ripe_prefixes.append(prefix)
+        if prefix not in existing and (asn, prefix) not in to_create:
+            to_create.append((asn, prefix))
+# }}
+
 
 def create_route(item):
     """Creates a single NetBird route for one (asn, prefix) pair."""
@@ -164,6 +191,7 @@ def create_route(item):
 
 print(f"Number of ripe_prefixes: {len(ripe_prefixes)}")
 print(f"Number of routes to create: {len(to_create)}")
+#print(f"Routes to create: {json.dumps(to_create)}")
 create_results, create_errors = run_workers(create_route, to_create, NETBIRD_THREADS)
 for prefix, text, status_code in create_results:
     if status_code == 200 and text.strip() in ("", "{}"):
@@ -186,7 +214,7 @@ for prefix, route in existing.items():
     if route.get("description", "").startswith("Managed by RIPE sync:") and prefix not in ripe_prefixes:
         to_delete.append((prefix, route))
 
-print(f"Number of Routes to delete: {len(to_delete)}")
+print(f"Number of routes to delete: {len(to_delete)}")
 delete_results, delete_errors = run_workers(delete_route, to_delete, NETBIRD_THREADS)
 for prefix, text, status_code in delete_results:
     if status_code == 200 and text.strip() in ("", "{}"):
