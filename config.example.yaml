@@ -1,0 +1,25 @@
+target: wireguard        # or netbird; overridable with --target
+ipv4_only: true
+exclude:                 # optional, subtracted from the result
+  - 10.0.0.0/8
+aggregate:
+  min_fill: 0.75         # optional; remove the key to disable lossy aggregation
+
+asns: [AS12345, AS67890]
+dns_names: [example.com]
+ripe:
+  threads: 5
+
+wireguard:
+  file: /etc/wireguard/via-amsnl1.txt
+  interface: wg0
+
+netbird:
+  api_url: https://api.netbird.io/api
+  token: "..."
+  peer_id: "..."
+  threads: 20
+route:
+  metric: 9999
+  groups: ["..."]
+  masquerade: true
