@@ -1,0 +1,1 @@
+*/10 * * * * root /usr/bin/flock -n /run/cron_asn_route_sync.py.lock /usr/bin/python3 /opt/asn-route-sync/asn_route_sync.py &>> /var/log/crons/asn_route_sync.py.log
