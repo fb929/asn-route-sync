@@ -336,13 +336,32 @@ def sync_netbird(cfg, desired, dry_run):
         for route in response.json() if route.get("network")
     ]
     existing_networks = {prefix for prefix, _ in existing}
+    def is_managed(route):
+        return (route.get("description") or "").startswith(NETBIRD_MARKER)
+
+    managed = [(prefix, route) for prefix, route in existing if is_managed(route)]
+    foreign = [(prefix, route) for prefix, route in existing if not is_managed(route)]
+    log.info("netbird: %d existing routes: %d managed by this script, %d foreign, %d unique networks",
+             len(existing), len(managed), len(foreign), len(existing_networks))
+    for prefix, route in foreign[:5]:
+        # foreign routes are never touched; show a few so leftovers of an
+        # older script version (different description) are easy to recognise
+        log.info("netbird: foreign route sample: %s | %r", prefix, route.get("description"))
 
     to_create = [prefix for prefix in desired if prefix not in existing_networks]
-    to_delete = [
-        (prefix, route) for prefix, route in existing
-        if prefix not in desired and (route.get("description") or "").startswith(NETBIRD_MARKER)
-    ]
-    log.info("netbird: %d existing, %d to create, %d to delete", len(existing), len(to_create), len(to_delete))
+    # obsolete = managed and no longer wanted; duplicate = second and further
+    # managed routes of a wanted network (leftovers of failed / parallel runs)
+    obsolete, duplicates, kept = [], [], set()
+    for prefix, route in managed:
+        if prefix not in desired:
+            obsolete.append((prefix, route, "obsolete"))
+        elif prefix in kept:
+            duplicates.append((prefix, route, "duplicate"))
+        else:
+            kept.add(prefix)
+    to_delete = obsolete + duplicates
+    log.info("netbird: %d to create, %d obsolete + %d duplicate to delete",
+             len(to_create), len(obsolete), len(duplicates))
 
     def create_route(prefix):
         log.info("netbird: creating route %s", prefix)
@@ -364,8 +383,8 @@ def sync_netbird(cfg, desired, dry_run):
         ).raise_for_status()
 
     def delete_route(item):
-        prefix, route = item
-        log.info("netbird: deleting obsolete route %s (%s)", prefix, route['id'])
+        prefix, route, reason = item
+        log.info("netbird: deleting %s route %s (%s)", reason, prefix, route['id'])
         if dry_run:
             return
         session.delete(f"{api_url}/routes/{route['id']}", timeout=NETBIRD_TIMEOUT).raise_for_status()
@@ -375,7 +394,7 @@ def sync_netbird(cfg, desired, dry_run):
         log.error("netbird: error creating route %s: %s", prefix, e)
 
     _, delete_errors = run_parallel(delete_route, to_delete, threads)
-    for (prefix, route), e in delete_errors:
+    for (prefix, route, _), e in delete_errors:
         log.error("netbird: error deleting route %s (%s): %s", prefix, route['id'], e)
 
     return len(create_errors) + len(delete_errors)
@@ -491,7 +510,12 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="only print what would be changed")
     args = parser.parse_args()
 
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s", stream=sys.stderr)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)-7s %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        stream=sys.stderr,
+    )
 
     try:
         cfg = load_config(args.config)
