@@ -22,6 +22,7 @@ Config reference (all keys except `asns` / target credentials are optional):
     timeout: 30
     min_peers_seeing: 0          # RIPEstat default is 10, which hides
                                  # regionally announced prefixes
+    fail_on_empty: false         # true = abort when an ASN announces nothing
   netbird: { api_url: ..., token: ..., peer_id: ..., threads: 20 }
   route: { groups: [...], metric: 9999, masquerade: true }
   wireguard:
@@ -145,7 +146,7 @@ def normalize_asn(asn):
 
 
 # collecting prefixes {{
-def fetch_asn_prefixes(session, asn, min_peers_seeing, timeout):
+def fetch_asn_prefixes(session, asn, min_peers_seeing, timeout, fail_on_empty):
     """Fetches prefixes originated by one ASN from the RIPEstat API."""
     response = session.get(
         RIPE_ANNOUNCED_URL,
@@ -163,9 +164,7 @@ def fetch_asn_prefixes(session, asn, min_peers_seeing, timeout):
     if payload.get("status") != "ok":
         raise RuntimeError(f"RIPEstat status is '{payload.get('status')}'")
     prefixes = [item["prefix"] for item in payload["data"]["prefixes"]]
-    if not prefixes:
-        # an empty answer is far more likely a RIPEstat hiccup than reality,
-        # and trusting it would delete every route of this ASN
+    if not prefixes and fail_on_empty:
         raise RuntimeError("RIPEstat returned no prefixes")
     return asn, prefixes
 
@@ -189,11 +188,15 @@ def collect_raw(cfg):
     threads = int(ripe.get('threads', 5))
     timeout = ripe.get('timeout', 30)
     min_peers_seeing = int(ripe.get('min_peers_seeing', 0))
+    # some registered ASNs legitimately originate nothing (e.g. AS11917
+    # WhatsApp - its traffic is served from AS32934), so an empty answer with
+    # status "ok" is only a warning unless the strict mode is requested
+    fail_on_empty = bool(ripe.get('fail_on_empty', False))
     asns = sorted({normalize_asn(asn) for asn in cfg.get('asns') or []})
 
     session = make_session(threads)
     results, errors = run_parallel(
-        lambda asn: fetch_asn_prefixes(session, asn, min_peers_seeing, timeout), asns, threads)
+        lambda asn: fetch_asn_prefixes(session, asn, min_peers_seeing, timeout, fail_on_empty), asns, threads)
     if errors:
         # a partial prefix list would make the sync DELETE the routes of
         # every ASN that failed to load - abort instead
@@ -203,7 +206,10 @@ def collect_raw(cfg):
 
     raw = []
     for asn, prefixes in results:
-        log.info("ripe: %s announces %d prefixes", asn, len(prefixes))
+        if prefixes:
+            log.info("ripe: %s announces %d prefixes", asn, len(prefixes))
+        else:
+            log.warning("ripe: %s announces nothing - dead ASN? consider removing it from the config", asn)
         raw.extend((asn, IPNetwork(prefix).cidr) for prefix in prefixes)
     for hostname in cfg.get('dns_names') or []:
         raw.extend((DNS_SOURCE, IPNetwork(ip)) for ip in resolve_hostname(hostname))
