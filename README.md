@@ -1,11 +1,11 @@
-# NetBird RIPE Route Sync
+# ASN Route Sync
 
-Synchronizes NetBird routes with prefixes announced by selected ASNs from RIPE.
+Synchronizes NetBird, WireGuard routes with prefixes announced by selected ASNs from RIPE.
 
 The script:
 
 * Downloads announced prefixes from RIPE Stat API
-* Removes existing NetBird routes before recreating them
+* Removes existing NetBird, WireGuard routes before recreating them
 * Creates routes with a configurable peer, metric, groups, and masquerading settings
 * Uses a YAML configuration file
 
